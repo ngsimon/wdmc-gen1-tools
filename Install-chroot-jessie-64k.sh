@@ -3,7 +3,7 @@
 # Based on: http://code.google.com/p/mbl-common/issues/list
 # Modified by Fox_exe, https://anionix.ru
 
-repositoryURL=http://ftp.anionix.ru/
+RepositoryURLs="http://ftp.anionix.ru/ http://wdnas.ml/debian/ http://wd.hides.su/debian/"
 
 NORM="\033[0m"
 INFO="\033[0;32mInfo:$NORM"
@@ -43,7 +43,10 @@ else
 fi
 
 echo -e "$INFO Replacing APT repository..."
-echo "deb ${repositoryURL} jessie-64k main" > /etc/apt/sources.list
+rm /etc/apt/sources.list
+for url in RepositoryURLs; do
+	echo "deb ${url} jessie-64k main" >> /etc/apt/sources.list
+done
 
 echo -e "$INFO Installing debootstrap..."
 apt-get update
@@ -52,13 +55,16 @@ echo "y" | apt-get --force-yes install debootstrap
 echo -e "$INFO Installing debian jessie in chroot directory..."
 echo -e "$INFO Please, be patient, may takes a long time..."
 cp /usr/share/debootstrap/scripts/jessie /usr/share/debootstrap/scripts/jessie-64k
-debootstrap --no-check-gpg --no-check-certificate --variant=minbase --exclude=yaboot,udev,dbus --include=locales jessie-64k $chrootBaseDir $repositoryURL
+debootstrap --no-check-gpg --no-check-certificate --variant=minbase --exclude=yaboot,udev,dbus --include=locales jessie-64k $chrootBaseDir
 if [ $? != 0 ]; then
 	echo -e "$ERROR Debootstrap fail. Code: $?"
 	exit 1
 fi
 echo "share:x:1000:root,www-data,daapd" >> $chrootBaseDir/etc/group
-echo "deb ${repositoryURL} jessie-64k main" > $chrootBaseDir/etc/apt/sources.list
+rm $chrootBaseDir/etc/apt/sources.list
+for url in RepositoryURLs; do
+	echo "deb ${url} jessie-64k main" >> $chrootBaseDir/etc/apt/sources.list
+done
 chroot $chrootBaseDir apt-get update > /dev/null 2>&1
 if [ $? != 0 ]; then
 	echo -e "$ERROR Updating Apt repository fail. Code: $?"
