@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Based on: http://code.google.com/p/mbl-common/issues/list
-# Modified by Fox_exe, https://anionix.ru
+# Allester Fox, anionix.ru
 
 RepositoryURLs="http://ftp.anionix.ru/ http://wdnas.ml/debian/ http://wd.hides.su/debian/"
 
@@ -10,7 +9,6 @@ INFO="\033[0;32mInfo:$NORM"
 ERROR="\033[0;31mError:$NORM"
 WARNING="\033[1;33mWarning:$NORM"
 INPUT="\033[1;32m => $NORM"
-isServicesInstalled=no
 
 if [ -z $1 ]; then
 	chrootDir=debian
@@ -43,38 +41,43 @@ else
 fi
 
 echo -e "$INFO Replacing APT repository..."
-rm /etc/apt/sources.list
-for url in RepositoryURLs; do
+mv /etc/apt/sources.list /etc/apt/sources.old
+for url in $RepositoryURLs; do
 	echo "deb ${url} jessie-64k main" >> /etc/apt/sources.list
 done
 
 echo -e "$INFO Installing debootstrap..."
 apt-get update
-echo "y" | apt-get --force-yes install debootstrap
+apt-get --force-yes -y install debootstrap
 
 echo -e "$INFO Installing debian jessie in chroot directory..."
 echo -e "$INFO Please, be patient, may takes a long time..."
 cp /usr/share/debootstrap/scripts/jessie /usr/share/debootstrap/scripts/jessie-64k
-debootstrap --no-check-gpg --no-check-certificate --variant=minbase --exclude=yaboot,udev,dbus --include=locales jessie-64k $chrootBaseDir
-if [ $? != 0 ]; then
+for url in $RepositoryURLs; do
+	debootstrap --no-check-gpg --no-check-certificate --variant=minbase --exclude=yaboot,udev,dbus --include=locales jessie-64k $chrootBaseDir $url
+	if [ $? = 1 ]; then
+		echo -e "$WARNING Cant download files. Trying another mirror..."
+	else
+		break
+	fi
+done
+if [ ! $? = 0 ]; then
 	echo -e "$ERROR Debootstrap fail. Code: $?"
 	exit 1
 fi
+
 echo "share:x:1000:root,www-data,daapd" >> $chrootBaseDir/etc/group
-rm $chrootBaseDir/etc/apt/sources.list
-for url in RepositoryURLs; do
-	echo "deb ${url} jessie-64k main" >> $chrootBaseDir/etc/apt/sources.list
-done
-chroot $chrootBaseDir apt-get update > /dev/null 2>&1
-if [ $? != 0 ]; then
-	echo -e "$ERROR Updating Apt repository fail. Code: $?"
-	exit 1
-fi
+cp /etc/apt/sources.list $chrootBaseDir/etc/apt/sources.list
+
+# You wanna "brick"? No? So, disable apt!
+echo "# Do not use apt in original firmware!" > /etc/apt/sources.list
+# Optional: Restore original list.
+#mv /etc/apt/sources.old /etc/apt/sources.list
 
 echo -e "$INFO Installing services control script..."
 # ==================================== #
 cat <<\EOF > $chrootBaseDir/chroot_$chrootDir.sh
-#!/bin/sh
+#!/bin/bash
 
 SCRIPT_NAME=$(basename $0)
 SCRIPT_START='99'
@@ -85,12 +88,11 @@ CHROOT_DIR="__CHROOT_DIR_PLACEHOLDER__"
 ALL_SERVICES="find /etc/rc2.d/ -type l ! -name "*rmnologin" ! -name "*motd" ! -name "*bootlogs" ! -name "*rc.local" -exec"
 
 ### BEGIN INIT INFO
-# Provides:			$SCRIPT_NAME
-# Required-Start:	
-# Required-Stop:	
-# X-Start-Before:	
+# Provides:		$SCRIPT_NAME
+# Required-Start:	$local_fs $remote_fs $network
+# Required-Stop:	$local_fs $remote_fs $network
 # Default-Start:	2 3 4 5
-# Default-Stop:		0 6
+# Default-Stop:		0 1 6
 ### END INIT INFO
 
 show_error() {
@@ -114,14 +116,14 @@ script_remove() {
 shareDirMountCount="$(mount | grep "$CHROOT_DIR/" | wc -l)"
 
 check_started() {
-  if [[ $shareDirMountCount -gt 0 ]]; then
+  if [[ $shareDirMountCount > 0 ]]; then
       echo "CHROOT servicess seems to be already started, exiting..."
       show_error 2
   fi
 }
 
 check_stopped() {
-  if [[ $shareDirMountCount -eq 0 ]]; then
+  if [[ $shareDirMountCount = 0 ]]; then
       echo "CHROOT services seems to be already stopped, exiting..."
       show_error 3
   fi
@@ -217,9 +219,7 @@ echo -e "$INFO Chroot installation done."
 
 read -r -e -p $'\e[32mInstall MiniDLNA server (y/n)? \e[0m' -N1 userAnswer
 if [ "$userAnswer" = "y" ]; then
-	echo -e "$INFO By default minidlna scan only Public folders."
-	echo -e "$INFO You can change settings in $chrootBaseDir/etc/minidlna.conf"
-	chroot $chrootBaseDir apt-get --force-yes install minidlna > /dev/null 2>&1
+	chroot $chrootBaseDir apt-get --force-yes -y install minidlna > /dev/null 2>&1
 	chroot $chrootBaseDir /etc/init.d/minidlna stop > /dev/null 2>&1
 	chroot $chrootBaseDir /etc/init.d/minissdpd stop > /dev/null 2>&1
 	killall minidlna > /dev/null 2>&1
@@ -227,25 +227,28 @@ if [ "$userAnswer" = "y" ]; then
 	rm -f $chrootBaseDir/var/lib/minidlna/files.db
 	isServicesInstalled="yes"
 	echo -e "$INFO MiniDLNA is installed."
+	echo -e "$INFO By default minidlna scan only Public folders."
+	echo -e "$INFO You can change settings in $chrootBaseDir/etc/minidlna.conf"
 fi
 
 read -r -e -p $'\e[32mInstall Transmission BitTorrent client (y/n)? \e[0m' -N1 userAnswer
 if [ "$userAnswer" = "y" ]; then
+	T_SETTINGS=$chrootBaseDir/etc/transmission-daemon/settings.json
 	[ -d /DataVolume/shares/Public/Torrents ] || mkdir /DataVolume/shares/Public/Torrents
 	echo -e "$INFO By default download dir is \"Public/Torrents\"."
-	echo -e "$INFO You can change this in $chrootBaseDir/etc/transmission-daemon/settings.json"
-	chroot $chrootBaseDir apt-get --force-yes install transmission-daemon
+	echo -e "$INFO You can change this in $T_SETTINGS"
+	chroot $chrootBaseDir apt-get --force-yes -y install transmission-daemon
 	chroot $chrootBaseDir /etc/init.d/transmission-daemon stop > /dev/null 2>&1
-	sed -i 's/USER=debian-transmission/USER=root:share/g' $chrootBaseDir/etc/init.d/transmission-daemon
+	sed -i 's/USER=debian-transmission/USER=root:share/g' $T_SETTINGS
 	sed -i 's/User=debian-transmission/User=root\nGroup=share/g' $chrootBaseDir/lib/systemd/system/transmission-daemon.service
-	sed -i "s|\"rpc-whitelist-enabled\": true,|\"rpc-whitelist-enabled\": false,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"cache-size-mb\": 4,|\"cache-size-mb\": 8,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"port-forwarding-enabled\": false,|\"port-forwarding-enabled\": true,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"ratio-limit-enabled\": false,|\"ratio-limit-enabled\": true,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"scrape-paused-torrents-enabled\": true,|\"scrape-paused-torrents-enabled\": false,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"trash-original-torrent-files\": false,|\"trash-original-torrent-files\": true,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"umask\": 18,|\"umask\": 2,|g" $chrootBaseDir/etc/transmission-daemon/settings.json
-	sed -i "s|\"download-dir\": \"/var/lib/transmission-daemon/downloads\",|\"download-dir\": \"/mnt/Public/Downloads\",|g" $chrootBaseDir/etc/transmission-daemon/settings.json	
+	sed -i "s|\"rpc-whitelist-enabled\": true,|\"rpc-whitelist-enabled\": false,|g" $T_SETTINGS
+	sed -i "s|\"cache-size-mb\": 4,|\"cache-size-mb\": 8,|g" $T_SETTINGS
+	sed -i "s|\"port-forwarding-enabled\": false,|\"port-forwarding-enabled\": true,|g" $T_SETTINGS
+	sed -i "s|\"ratio-limit-enabled\": false,|\"ratio-limit-enabled\": true,|g" $T_SETTINGS
+	sed -i "s|\"scrape-paused-torrents-enabled\": true,|\"scrape-paused-torrents-enabled\": false,|g" $T_SETTINGS
+	sed -i "s|\"trash-original-torrent-files\": false,|\"trash-original-torrent-files\": true,|g" $T_SETTINGS
+	sed -i "s|\"umask\": 18,|\"umask\": 2,|g" $T_SETTINGS
+	sed -i "s|\"download-dir\": \"/var/lib/transmission-daemon/downloads\",|\"download-dir\": \"/mnt/Public/Downloads\",|g" $T_SETTINGS	
 	isServicesInstalled="yes"
 	echo -e "$INFO Transmission is installed."
 fi
