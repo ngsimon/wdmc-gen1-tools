@@ -1,6 +1,6 @@
 # Tools and scripts for WD MyCloud 1st generation (Gen1)
 ----------
-**More info on my website: https://anionix.ru and archive: http://ftp.anionix.ru**
+**More info on my website: http://anionix.ddns.net**
 
 - **build-64k-packages** directory:
  - For install build env:
